@@ -27,11 +27,21 @@ Output:
 📥 Received URL: https://podcasts.apple.com/us/podcast/id840986946?i=1000631244436
 ✅ Fetched HTML content.
 ✅ Metadata extracted and saved to output/metadata.json
+⚠️ No transcript found for this episode.
+```
+
+Or if a transcript is available:
+```
+📥 Received URL: https://podcasts.apple.com/episode-with-transcript
+✅ Fetched HTML content.
+✅ Metadata extracted and saved to output/metadata.json
+✅ Transcript downloaded and saved to output/transcript.ttml
 ```
 
 The tool automatically:
 1. Fetches the HTML content and saves it to `output/episode.html`
 2. Extracts episode metadata and saves it to `output/metadata.json`
+3. Detects and downloads transcripts (`.ttml` format) if available
 
 ### Examples
 
@@ -47,13 +57,14 @@ applecast-cli https://podcasts.apple.com/us/podcast/the-daily/id1200361736
 
 ### Output
 
-The tool creates an `output/` directory with two files:
+The tool creates an `output/` directory with the following files:
 
 ```
 applecast-cli/
 ├── output/
-│   ├── episode.html      # Full HTML content from Apple Podcasts
-│   └── metadata.json     # Extracted episode metadata
+│   ├── episode.html       # Full HTML content from Apple Podcasts
+│   ├── metadata.json      # Extracted episode metadata
+│   └── transcript.ttml    # Episode transcript (if available)
 └── ...
 ```
 
@@ -66,6 +77,15 @@ applecast-cli/
   "publish_date": "2023-10-13"
 }
 ```
+
+**transcript.ttml** (when available) contains the episode's closed captions in TTML format, which can be further processed or converted to plain text.
+
+### Transcript Availability
+
+Not all Apple Podcasts episodes include transcripts. The tool will automatically:
+- Search for transcript URLs in the episode's HTML data
+- Download the transcript if found (saved as `output/transcript.ttml`)
+- Display a warning message if no transcript is available
 
 ### Error Handling
 

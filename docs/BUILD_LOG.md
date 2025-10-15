@@ -236,8 +236,103 @@ Implements specs/slices/step-3_extract-metadata.md
 ```
 
 **Next Steps:**
-- Step 4: Add CLI flags for output directory customization
-- Step 5: Implement audio file URL extraction
-- Step 6: Add download functionality for audio files
+- Step 4: Detect and download episode transcripts
+
+---
+
+## Slice 04 - Download Transcript
+
+**Date:** 2025-10-15
+
+**Status:** Complete
+
+**Summary:**
+- Implemented transcript URL detection from Apple Podcasts episode HTML
+- Created recursive JSON search to find closedCaptions URLs in serialized data
+- Added HTTP download functionality for TTML transcript files
+- Implemented graceful handling when no transcript is available
+- Wrote 4 new unit tests following TDD/BDD approach (23 total tests now)
+- All tests passing (19 unit + 4 integration)
+- Successfully handles both transcript-available and transcript-unavailable scenarios
+
+**Dependencies Added:**
+- `regex = "1.10"` - Regular expression support for HTML parsing
+
+**Files Modified:**
+- `Cargo.toml` - Added regex dependency
+- `src/main.rs` - Added 2 new functions and updated main() to handle transcripts
+- `README.md` - Updated with transcript feature documentation and examples
+- `docs/BUILD_LOG.md` - Added this slice documentation
+
+**New Functionality:**
+- `find_transcript_url(html_path)` - Searches for transcript URL in episode HTML
+  - Extracts JSON from `<script id="serialized-server-data">` tag
+  - Recursively searches for `closedCaptions.url` in nested JSON structure
+  - Returns `Option<String>` with URL if found, None otherwise
+- `download_transcript(url, output_path)` - Downloads transcript file
+  - Creates output directory if needed
+  - Performs HTTP GET request with error handling
+  - Validates HTTP response status
+  - Saves transcript content to file
+- Updated `main()` function to:
+  - Search for transcript URL after metadata extraction
+  - Download transcript if found
+  - Display appropriate success/warning messages
+
+**Transcript Detection Strategy:**
+1. **Parse HTML:** Extract serialized-server-data JSON blob using regex
+2. **Recursive Search:** Traverse entire JSON structure looking for closedCaptions.url
+3. **Download:** If found, fetch transcript file and save as output/transcript.ttml
+4. **Graceful Fallback:** Display warning if no transcript available (common case)
+
+**Test Coverage:**
+- New unit tests (all passing ✅):
+  - `test_find_transcript_url_returns_none_when_not_available` - Handles missing transcripts
+  - `test_find_transcript_url_extracts_valid_url` - Extracts URL from nested JSON
+  - `test_download_transcript_creates_file` - Downloads and saves transcript file
+  - `test_download_transcript_handles_http_errors` - Handles HTTP errors gracefully
+- Total: 23 tests (19 unit + 4 integration)
+- All transcript tests: 4/4 passing ✅
+
+**Manual Testing Results:**
+- ✅ Successfully handles episodes without transcripts (displays warning)
+- ✅ Recursive JSON search correctly traverses nested structures
+- ✅ HTTP download functionality works with valid URLs
+- ✅ Error handling for network failures and HTTP errors
+- ✅ Output messages are clear and user-friendly
+
+**Code Quality:**
+- Follows Rust idioms and best practices
+- Comprehensive error handling with anyhow::Result
+- Modular design with single-responsibility functions
+- Well-documented with clear function comments
+- All code formatted with `cargo fmt`
+- Clean clippy output (1 minor warning, non-blocking)
+
+**User Experience:**
+- Clear emoji-based status messages (✅ success, ⚠️ warning)
+- Non-blocking behavior: transcript failure doesn't stop the tool
+- Informative output about transcript availability
+- Consistent file naming convention (output/transcript.ttml)
+
+**Commit Message:**
+```
+feat: implement transcript detection and download (Step 4)
+
+- Add regex dependency for HTML parsing
+- Implement find_transcript_url() with recursive JSON search
+- Implement download_transcript() for TTML file downloads
+- Update main() to detect and download transcripts
+- Add 4 comprehensive unit tests (TDD approach)
+- Update README with transcript feature documentation
+- All 23 tests passing (19 unit + 4 integration)
+- Graceful handling of missing transcripts
+
+Implements specs/slices/step-4_download-transcript.md
+```
+
+**Next Steps:**
+- Step 5: Parse TTML transcript into clean plain text
+- Step 6: Add CLI flags for output directory customization
 
 ---

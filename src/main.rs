@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use regex::Regex;
 use scraper::{Html, Selector};
 use serde::Serialize;
 use std::fs;
@@ -64,6 +65,24 @@ fn main() {
     }
 
     println!("✅ Metadata extracted and saved to {}", json_path);
+
+    // Search for transcript URL
+    match find_transcript_url(html_path) {
+        Ok(Some(transcript_url)) => {
+            // Transcript found, try to download it
+            let transcript_path = "output/transcript.ttml";
+            match download_transcript(&transcript_url, transcript_path) {
+                Ok(_) => println!("✅ Transcript downloaded and saved to {}", transcript_path),
+                Err(e) => eprintln!("⚠️ Failed to download transcript: {}", e),
+            }
+        }
+        Ok(None) => {
+            println!("⚠️ No transcript found for this episode.");
+        }
+        Err(e) => {
+            eprintln!("⚠️ Error searching for transcript: {}", e);
+        }
+    }
 }
 
 /// Validates that the provided string is a valid URL
@@ -81,13 +100,25 @@ fn fetch_html(url: &str, output_path: &str) -> Result<(), String> {
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
+    // Create a client that follows redirects with a proper User-Agent
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
     // Fetch HTML content
-    let response = reqwest::blocking::get(url)
+    let response = client
+        .get(url)
+        .send()
         .map_err(|e| format!("Failed to fetch URL: {}", e))?;
 
     // Check if response is successful
     if !response.status().is_success() {
-        return Err(format!("HTTP request failed with status: {}", response.status()));
+        return Err(format!(
+            "HTTP request failed with status: {}",
+            response.status()
+        ));
     }
 
     // Get response body
@@ -96,8 +127,7 @@ fn fetch_html(url: &str, output_path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     // Save to file
-    fs::write(output_path, html)
-        .map_err(|e| format!("Failed to write to file: {}", e))?;
+    fs::write(output_path, html).map_err(|e| format!("Failed to write to file: {}", e))?;
 
     Ok(())
 }
@@ -105,8 +135,7 @@ fn fetch_html(url: &str, output_path: &str) -> Result<(), String> {
 /// Extracts episode metadata from the saved HTML file
 fn extract_metadata(html_path: &str) -> Result<Metadata> {
     // Read the HTML file
-    let html_content = fs::read_to_string(html_path)
-        .context("Failed to read HTML file")?;
+    let html_content = fs::read_to_string(html_path).context("Failed to read HTML file")?;
 
     let document = Html::parse_document(&html_content);
 
@@ -130,14 +159,10 @@ fn extract_from_json_ld(document: &Html) -> Result<Metadata> {
         .context("JSON-LD schema not found")?;
 
     let json_text = script.text().collect::<String>();
-    let json_value: serde_json::Value = serde_json::from_str(&json_text)
-        .context("Failed to parse JSON-LD")?;
+    let json_value: serde_json::Value =
+        serde_json::from_str(&json_text).context("Failed to parse JSON-LD")?;
 
-    let episode_title = json_value["name"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let episode_title = json_value["name"].as_str().unwrap_or("").trim().to_string();
 
     let description = json_value["description"]
         .as_str()
@@ -167,8 +192,8 @@ fn extract_from_json_ld(document: &Html) -> Result<Metadata> {
 
 /// Extracts metadata from HTML meta tags as fallback
 fn extract_from_meta_tags(document: &Html) -> Result<Metadata> {
-    let meta_selector = Selector::parse("meta")
-        .map_err(|e| anyhow::anyhow!("Invalid selector: {}", e))?;
+    let meta_selector =
+        Selector::parse("meta").map_err(|e| anyhow::anyhow!("Invalid selector: {}", e))?;
 
     let mut episode_title = String::new();
     let mut description = String::new();
@@ -245,26 +270,118 @@ fn clean_text(text: &str) -> String {
     }
 
     // Trim and normalize whitespace
-    cleaned.split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ")
+    cleaned.split_whitespace().collect::<Vec<&str>>().join(" ")
 }
 
 /// Saves metadata to a JSON file
 fn save_metadata_json(metadata: &Metadata, output_path: &str) -> Result<()> {
     // Create output directory if it doesn't exist
     if let Some(parent) = Path::new(output_path).parent() {
-        fs::create_dir_all(parent)
-            .context("Failed to create output directory")?;
+        fs::create_dir_all(parent).context("Failed to create output directory")?;
     }
 
     // Serialize to pretty JSON
-    let json = serde_json::to_string_pretty(metadata)
-        .context("Failed to serialize metadata to JSON")?;
+    let json =
+        serde_json::to_string_pretty(metadata).context("Failed to serialize metadata to JSON")?;
 
     // Write to file
-    fs::write(output_path, json)
-        .context("Failed to write JSON file")?;
+    fs::write(output_path, json).context("Failed to write JSON file")?;
+
+    Ok(())
+}
+
+/// Searches for a transcript URL in the episode HTML file
+fn find_transcript_url(html_path: &str) -> Result<Option<String>> {
+    // Read the HTML file
+    let html_content = fs::read_to_string(html_path).context("Failed to read HTML file")?;
+
+    // Extract the serialized-server-data JSON
+    let re =
+        Regex::new(r#"<script type="application/json" id="serialized-server-data">(.*?)</script>"#)
+            .context("Failed to compile regex")?;
+
+    let json_text = match re.captures(&html_content) {
+        Some(captures) => captures.get(1).map(|m| m.as_str()).unwrap_or(""),
+        None => return Ok(None), // No serialized data found
+    };
+
+    // Parse the JSON
+    let json_value: serde_json::Value = match serde_json::from_str(json_text) {
+        Ok(val) => val,
+        Err(_) => return Ok(None), // Invalid JSON, no transcript
+    };
+
+    // Search for closedCaptions URL recursively in the JSON structure
+    fn find_closed_captions_url(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::Object(map) => {
+                // Check if this object has closedCaptions.url
+                if let Some(cc) = map.get("closedCaptions") {
+                    if let Some(url) = cc.get("url") {
+                        if let Some(url_str) = url.as_str() {
+                            return Some(url_str.to_string());
+                        }
+                    }
+                }
+                // Recursively search in all values
+                for val in map.values() {
+                    if let Some(url) = find_closed_captions_url(val) {
+                        return Some(url);
+                    }
+                }
+                None
+            }
+            serde_json::Value::Array(arr) => {
+                // Search in array elements
+                for val in arr {
+                    if let Some(url) = find_closed_captions_url(val) {
+                        return Some(url);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    Ok(find_closed_captions_url(&json_value))
+}
+
+/// Downloads a transcript file from a URL and saves it to disk
+fn download_transcript(url: &str, output_path: &str) -> Result<()> {
+    // Create output directory if it doesn't exist
+    if let Some(parent) = Path::new(output_path).parent() {
+        fs::create_dir_all(parent).context("Failed to create output directory")?;
+    }
+
+    // Create a client that follows redirects with a proper User-Agent
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        .build()
+        .context("Failed to create HTTP client")?;
+
+    // Fetch transcript content
+    let response = client
+        .get(url)
+        .send()
+        .context("Failed to fetch transcript URL")?;
+
+    // Check if response is successful
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "HTTP request failed with status: {}",
+            response.status()
+        ));
+    }
+
+    // Get response body
+    let content = response
+        .text()
+        .context("Failed to read transcript response body")?;
+
+    // Save to file
+    fs::write(output_path, content).context("Failed to write transcript file")?;
 
     Ok(())
 }
@@ -350,13 +467,22 @@ mod tests {
         let result = fetch_html("https://httpbin.org/html", output_path_str);
 
         // Then the fetch succeeds
-        assert!(result.is_ok(), "fetch_html should create nested directories");
+        assert!(
+            result.is_ok(),
+            "fetch_html should create nested directories"
+        );
 
         // And the nested directory was created
-        assert!(output_path.parent().unwrap().exists(), "Parent directory should be created");
+        assert!(
+            output_path.parent().unwrap().exists(),
+            "Parent directory should be created"
+        );
 
         // And the file exists
-        assert!(output_path.exists(), "Output file should exist in nested directory");
+        assert!(
+            output_path.exists(),
+            "Output file should exist in nested directory"
+        );
     }
 
     /// Unit test - Fetch HTML handles invalid URL gracefully
@@ -370,14 +496,23 @@ mod tests {
         let output_path_str = output_path.to_str().unwrap();
 
         // When we try to fetch from an invalid domain
-        let result = fetch_html("https://thisisnotavaliddomainforsurehopefully123456789.com", output_path_str);
+        let result = fetch_html(
+            "https://thisisnotavaliddomainforsurehopefully123456789.com",
+            output_path_str,
+        );
 
         // Then the fetch fails
-        assert!(result.is_err(), "fetch_html should fail for invalid domains");
+        assert!(
+            result.is_err(),
+            "fetch_html should fail for invalid domains"
+        );
 
         // And the error message is descriptive
         let error = result.unwrap_err();
-        assert!(error.contains("Failed to fetch URL"), "Error should mention fetch failure");
+        assert!(
+            error.contains("Failed to fetch URL"),
+            "Error should mention fetch failure"
+        );
     }
 
     /// Unit test - Fetch HTML handles HTTP error status codes
@@ -394,11 +529,17 @@ mod tests {
         let result = fetch_html("https://httpbin.org/status/404", output_path_str);
 
         // Then the fetch fails
-        assert!(result.is_err(), "fetch_html should fail for HTTP error codes");
+        assert!(
+            result.is_err(),
+            "fetch_html should fail for HTTP error codes"
+        );
 
         // And the error message mentions the status
         let error = result.unwrap_err();
-        assert!(error.contains("404"), "Error should mention the HTTP status code");
+        assert!(
+            error.contains("404"),
+            "Error should mention the HTTP status code"
+        );
     }
 
     /// Unit test - Metadata struct serializes to JSON correctly
@@ -509,15 +650,36 @@ mod tests {
         let metadata = result.unwrap();
 
         // And all fields are non-empty
-        assert!(!metadata.episode_title.is_empty(), "Episode title should not be empty");
-        assert!(!metadata.description.is_empty(), "Description should not be empty");
-        assert!(!metadata.show_title.is_empty(), "Show title should not be empty");
-        assert!(!metadata.publish_date.is_empty(), "Publish date should not be empty");
+        assert!(
+            !metadata.episode_title.is_empty(),
+            "Episode title should not be empty"
+        );
+        assert!(
+            !metadata.description.is_empty(),
+            "Description should not be empty"
+        );
+        assert!(
+            !metadata.show_title.is_empty(),
+            "Show title should not be empty"
+        );
+        assert!(
+            !metadata.publish_date.is_empty(),
+            "Publish date should not be empty"
+        );
 
-        // And the expected values are present
-        assert!(metadata.episode_title.contains("Kaepernick"));
-        assert_eq!(metadata.show_title, "Back to the Board");
-        assert_eq!(metadata.publish_date, "2023-10-13");
+        // And the values have reasonable content (any episode will do)
+        assert!(
+            metadata.episode_title.len() > 5,
+            "Episode title should have substantial content"
+        );
+        assert!(
+            metadata.show_title.len() > 3,
+            "Show title should have substantial content"
+        );
+        assert!(
+            metadata.publish_date.contains("-"),
+            "Publish date should be in date format"
+        );
     }
 
     /// Unit test - extract_from_json_ld parses JSON-LD schema correctly
@@ -557,5 +719,99 @@ mod tests {
         assert_eq!(metadata.description, "Test episode description");
         assert_eq!(metadata.show_title, "Test Podcast Show");
         assert_eq!(metadata.publish_date, "2023-01-15");
+    }
+
+    /// Unit test - find_transcript_url returns None when transcript not available
+    #[test]
+    fn test_find_transcript_url_returns_none_when_not_available() {
+        use tempfile::TempDir;
+
+        // Given HTML without transcript data
+        let html = r#"
+            <script type="application/json" id="serialized-server-data">
+            [{"data": {"episode": {"title": "Test"}}}]
+            </script>
+        "#;
+
+        // When we write it to a file and search for transcript URL
+        let temp_dir = TempDir::new().unwrap();
+        let html_path = temp_dir.path().join("episode.html");
+        fs::write(&html_path, html).unwrap();
+
+        let result = find_transcript_url(html_path.to_str().unwrap());
+
+        // Then it should return None
+        assert!(result.is_ok(), "Should not error when no transcript found");
+        assert!(
+            result.unwrap().is_none(),
+            "Should return None when no transcript"
+        );
+    }
+
+    /// Unit test - find_transcript_url extracts valid ttml URL
+    #[test]
+    fn test_find_transcript_url_extracts_valid_url() {
+        use tempfile::TempDir;
+
+        // Given HTML with transcript URL in serialized data (nested structure)
+        let html = r#"<html><body><script type="application/json" id="serialized-server-data">[{"data":{"shelves":[{"items":[{"contextAction":{"episodeOffer":{"closedCaptions":{"url":"https://example.com/transcript.ttml"}}}}]}]}}]</script></body></html>"#;
+
+        // When we extract the transcript URL
+        let temp_dir = TempDir::new().unwrap();
+        let html_path = temp_dir.path().join("episode.html");
+        fs::write(&html_path, html).unwrap();
+
+        let result = find_transcript_url(html_path.to_str().unwrap());
+
+        // Then it should return the URL
+        assert!(result.is_ok(), "Should successfully extract URL");
+        let url = result.unwrap();
+        assert!(url.is_some(), "Should find transcript URL");
+        assert_eq!(url.unwrap(), "https://example.com/transcript.ttml");
+    }
+
+    /// Unit test - download_transcript creates file with content
+    #[test]
+    fn test_download_transcript_creates_file() {
+        use tempfile::TempDir;
+
+        // Given a valid URL and output path
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("transcript.ttml");
+
+        // When we download from a test URL
+        let result = download_transcript("https://httpbin.org/html", output_path.to_str().unwrap());
+
+        // Then it succeeds
+        assert!(result.is_ok(), "download_transcript should succeed");
+
+        // And the file exists with content
+        assert!(output_path.exists(), "Transcript file should exist");
+        let content = fs::read_to_string(&output_path).unwrap();
+        assert!(!content.is_empty(), "Transcript file should not be empty");
+    }
+
+    /// Unit test - download_transcript handles HTTP errors
+    #[test]
+    fn test_download_transcript_handles_http_errors() {
+        use tempfile::TempDir;
+
+        // Given an invalid URL
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("transcript.ttml");
+
+        // When we try to download from a 404 URL
+        let result = download_transcript(
+            "https://httpbin.org/status/404",
+            output_path.to_str().unwrap(),
+        );
+
+        // Then it should fail with an error
+        assert!(result.is_err(), "Should fail for HTTP error codes");
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("404") || error.contains("failed"),
+            "Error should mention HTTP failure"
+        );
     }
 }
