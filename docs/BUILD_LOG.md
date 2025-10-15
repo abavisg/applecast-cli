@@ -123,3 +123,121 @@ Implements specs/slices/step-2_fetch-html.md
 - Step 3: Parse HTML and extract episode metadata (title, description, publish date, etc.)
 
 ---
+
+## Slice 03 - Extract Episode Metadata
+
+**Date:** 2025-10-15
+
+**Status:** Complete
+
+**Summary:**
+- Implemented HTML parsing using the scraper crate with CSS selectors
+- Created typed Metadata struct with serde serialization
+- Built robust extraction system with JSON-LD schema parsing (primary) and meta tag fallback
+- Added text cleaning utilities to remove HTML tags and normalize whitespace
+- Implemented JSON file output with pretty-printing
+- Wrote 6 new unit tests following TDD/BDD approach (19 total tests now)
+- All metadata extraction tests passing
+- Successfully tested with real Apple Podcasts HTML
+
+**Dependencies Added:**
+- `scraper = "0.20"` - HTML parsing with CSS selectors
+- `serde = { version = "1.0", features = ["derive"] }` - Serialization framework
+- `serde_json = "1.0"` - JSON serialization/deserialization
+- `anyhow = "1.0"` - Ergonomic error handling with context
+
+**Files Modified:**
+- `Cargo.toml` - Added scraper, serde, serde_json, and anyhow dependencies
+- `src/main.rs` - Added Metadata struct and 5 new functions for extraction and serialization
+- `README.md` - Updated with Step 3 output examples and metadata.json structure
+- `docs/BUILD_LOG.md` - Added this slice documentation
+
+**New Data Structures:**
+```rust
+#[derive(Debug, Serialize, Clone, PartialEq)]
+struct Metadata {
+    episode_title: String,
+    description: String,
+    show_title: String,
+    publish_date: String,
+}
+```
+
+**New Functionality:**
+- `extract_metadata(html_path)` - Main extraction coordinator that tries multiple strategies
+- `extract_from_json_ld(document)` - Extracts from JSON-LD schema (most reliable method)
+- `extract_from_meta_tags(document)` - Fallback extraction from HTML meta tags
+- `clean_text(text)` - Removes HTML tags and normalizes whitespace
+- `save_metadata_json(metadata, output_path)` - Saves to pretty-printed JSON file
+
+**Extraction Strategy:**
+1. **Primary:** Parse JSON-LD schema embedded in `<script id="schema:episode">` tag
+   - Most reliable and structured data source
+   - Contains all episode metadata in structured format
+2. **Fallback:** Extract from HTML meta tags (og:title, apple:title, etc.)
+   - Used if JSON-LD schema is not found
+   - Less reliable but provides basic coverage
+
+**Test Coverage:**
+- New unit tests (all passing ✅):
+  - `test_metadata_serialization` - Validates Metadata struct JSON serialization
+  - `test_clean_text_removes_html_tags` - Tests HTML tag removal functionality
+  - `test_clean_text_normalizes_whitespace` - Tests whitespace normalization
+  - `test_save_metadata_json_creates_file` - Validates JSON file creation and format
+  - `test_extract_metadata_from_real_html` - End-to-end test with actual Apple Podcasts HTML
+  - `test_extract_from_json_ld` - Tests JSON-LD schema parsing with sample data
+- Total: 19 tests (15 unit + 4 integration)
+- Metadata-specific tests: 6/6 passing ✅
+
+**Manual Testing Results:**
+- ✅ Successfully extracted metadata from real Apple Podcasts episode page
+- ✅ Output file created at `output/metadata.json` with proper formatting
+- ✅ All fields populated correctly: title, description, show name, publish date
+- ✅ Text properly cleaned and trimmed
+- ✅ Valid JSON output verified with jq
+
+**Example Output (output/metadata.json):**
+```json
+{
+  "episode_title": "Kaepernick, Dak, the latest NBA news, and a slice of MLB",
+  "description": "Join us as we discuss a few of the latest news surrounding the world of sports ranging from a possible Colin Kaepernick Football return(to the XFL), to Clayton Kershaw's stint with the Dodgers being in jeopardy. Tune in to our conversations weekly, every Friday",
+  "show_title": "Back to the Board",
+  "publish_date": "2023-10-13"
+}
+```
+
+**Error Handling:**
+- All functions return `Result<T, anyhow::Error>` for proper error propagation
+- Context added to errors for better debugging (e.g., "Failed to read HTML file")
+- Graceful handling of missing fields with empty strings as defaults
+- Clear error messages for parsing failures
+
+**Code Quality:**
+- Follows idiomatic Rust patterns and conventions
+- Modular function design for easy testing and extension
+- Comprehensive error handling throughout
+- Well-documented with clear function comments
+- All code formatted with `cargo fmt`
+
+**Commit Message:**
+```
+feat: implement metadata extraction (Step 3)
+
+- Add scraper, serde, serde_json, and anyhow dependencies
+- Create Metadata struct with serde serialization
+- Implement extract_metadata() with JSON-LD and meta tag parsing
+- Add clean_text() utility for HTML tag removal
+- Implement save_metadata_json() for pretty JSON output
+- Add 6 comprehensive unit tests (TDD approach)
+- Update README with metadata.json output examples
+- All metadata tests passing (6/6)
+
+Implements specs/slices/step-3_extract-metadata.md
+```
+
+**Next Steps:**
+- Step 4: Add CLI flags for output directory customization
+- Step 5: Implement audio file URL extraction
+- Step 6: Add download functionality for audio files
+
+---

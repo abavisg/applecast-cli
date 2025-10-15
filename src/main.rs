@@ -1,8 +1,20 @@
+use anyhow::{Context, Result};
 use clap::Parser;
+use scraper::{Html, Selector};
+use serde::Serialize;
 use std::fs;
 use std::path::Path;
 use std::process;
 use url::Url;
+
+/// Represents episode metadata extracted from Apple Podcasts HTML
+#[derive(Debug, Serialize, Clone, PartialEq)]
+struct Metadata {
+    episode_title: String,
+    description: String,
+    show_title: String,
+    publish_date: String,
+}
 
 /// A CLI tool for fetching and processing Apple Podcasts content
 #[derive(Parser, Debug)]
@@ -27,13 +39,31 @@ fn main() {
     println!("📥 Received URL: {}", args.url);
 
     // Fetch HTML content
-    let output_path = "output/episode.html";
-    if let Err(e) = fetch_html(&args.url, output_path) {
+    let html_path = "output/episode.html";
+    if let Err(e) = fetch_html(&args.url, html_path) {
         eprintln!("Error: {}", e);
         process::exit(1);
     }
 
     println!("✅ Fetched HTML content.");
+
+    // Extract metadata from HTML
+    let metadata = match extract_metadata(html_path) {
+        Ok(meta) => meta,
+        Err(e) => {
+            eprintln!("Error extracting metadata: {}", e);
+            process::exit(1);
+        }
+    };
+
+    // Save metadata to JSON
+    let json_path = "output/metadata.json";
+    if let Err(e) = save_metadata_json(&metadata, json_path) {
+        eprintln!("Error saving metadata: {}", e);
+        process::exit(1);
+    }
+
+    println!("✅ Metadata extracted and saved to {}", json_path);
 }
 
 /// Validates that the provided string is a valid URL
@@ -68,6 +98,173 @@ fn fetch_html(url: &str, output_path: &str) -> Result<(), String> {
     // Save to file
     fs::write(output_path, html)
         .map_err(|e| format!("Failed to write to file: {}", e))?;
+
+    Ok(())
+}
+
+/// Extracts episode metadata from the saved HTML file
+fn extract_metadata(html_path: &str) -> Result<Metadata> {
+    // Read the HTML file
+    let html_content = fs::read_to_string(html_path)
+        .context("Failed to read HTML file")?;
+
+    let document = Html::parse_document(&html_content);
+
+    // Try to extract from JSON-LD schema first (most reliable)
+    if let Ok(metadata) = extract_from_json_ld(&document) {
+        return Ok(metadata);
+    }
+
+    // Fallback to meta tags
+    extract_from_meta_tags(&document)
+}
+
+/// Extracts metadata from JSON-LD schema in the HTML
+fn extract_from_json_ld(document: &Html) -> Result<Metadata> {
+    let script_selector = Selector::parse("script[id='schema:episode']")
+        .map_err(|e| anyhow::anyhow!("Invalid selector: {}", e))?;
+
+    let script = document
+        .select(&script_selector)
+        .next()
+        .context("JSON-LD schema not found")?;
+
+    let json_text = script.text().collect::<String>();
+    let json_value: serde_json::Value = serde_json::from_str(&json_text)
+        .context("Failed to parse JSON-LD")?;
+
+    let episode_title = json_value["name"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    let description = json_value["description"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    let show_title = json_value["partOfSeries"]["name"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    let publish_date = json_value["datePublished"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    Ok(Metadata {
+        episode_title,
+        description,
+        show_title,
+        publish_date,
+    })
+}
+
+/// Extracts metadata from HTML meta tags as fallback
+fn extract_from_meta_tags(document: &Html) -> Result<Metadata> {
+    let meta_selector = Selector::parse("meta")
+        .map_err(|e| anyhow::anyhow!("Invalid selector: {}", e))?;
+
+    let mut episode_title = String::new();
+    let mut description = String::new();
+    let mut show_title = String::new();
+    let publish_date = String::new();
+
+    for element in document.select(&meta_selector) {
+        if let Some(property) = element.value().attr("property") {
+            match property {
+                "og:title" => {
+                    if let Some(content) = element.value().attr("content") {
+                        episode_title = clean_text(content);
+                    }
+                }
+                _ => {}
+            }
+        } else if let Some(name) = element.value().attr("name") {
+            match name {
+                "apple:title" => {
+                    if let Some(content) = element.value().attr("content") {
+                        if episode_title.is_empty() {
+                            episode_title = clean_text(content);
+                        }
+                    }
+                }
+                "description" | "apple:description" => {
+                    if let Some(content) = element.value().attr("content") {
+                        if description.is_empty() {
+                            description = clean_text(content);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Try to extract show title from og:description
+    if show_title.is_empty() {
+        let og_desc_selector = Selector::parse("meta[property='og:description']")
+            .map_err(|e| anyhow::anyhow!("Invalid selector: {}", e))?;
+
+        if let Some(element) = document.select(&og_desc_selector).next() {
+            if let Some(content) = element.value().attr("content") {
+                // og:description often contains "Podcast Episode · Show Name · Date"
+                let parts: Vec<&str> = content.split(" · ").collect();
+                if parts.len() >= 2 {
+                    show_title = parts[1].trim().to_string();
+                }
+            }
+        }
+    }
+
+    Ok(Metadata {
+        episode_title,
+        description,
+        show_title,
+        publish_date,
+    })
+}
+
+/// Cleans text by trimming whitespace and removing HTML tags
+fn clean_text(text: &str) -> String {
+    // Remove HTML tags using a simple regex-like approach
+    let mut cleaned = text.to_string();
+
+    // Remove HTML tags
+    while let Some(start) = cleaned.find('<') {
+        if let Some(end) = cleaned[start..].find('>') {
+            cleaned.replace_range(start..start + end + 1, "");
+        } else {
+            break;
+        }
+    }
+
+    // Trim and normalize whitespace
+    cleaned.split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+}
+
+/// Saves metadata to a JSON file
+fn save_metadata_json(metadata: &Metadata, output_path: &str) -> Result<()> {
+    // Create output directory if it doesn't exist
+    if let Some(parent) = Path::new(output_path).parent() {
+        fs::create_dir_all(parent)
+            .context("Failed to create output directory")?;
+    }
+
+    // Serialize to pretty JSON
+    let json = serde_json::to_string_pretty(metadata)
+        .context("Failed to serialize metadata to JSON")?;
+
+    // Write to file
+    fs::write(output_path, json)
+        .context("Failed to write JSON file")?;
 
     Ok(())
 }
@@ -202,5 +399,163 @@ mod tests {
         // And the error message mentions the status
         let error = result.unwrap_err();
         assert!(error.contains("404"), "Error should mention the HTTP status code");
+    }
+
+    /// Unit test - Metadata struct serializes to JSON correctly
+    #[test]
+    fn test_metadata_serialization() {
+        // Given a Metadata struct with sample data
+        let metadata = Metadata {
+            episode_title: "Test Episode".to_string(),
+            description: "This is a test description".to_string(),
+            show_title: "Test Show".to_string(),
+            publish_date: "2023-10-13".to_string(),
+        };
+
+        // When we serialize it to JSON
+        let json = serde_json::to_string(&metadata).unwrap();
+
+        // Then it contains all the expected fields
+        assert!(json.contains("episode_title"));
+        assert!(json.contains("Test Episode"));
+        assert!(json.contains("description"));
+        assert!(json.contains("This is a test description"));
+        assert!(json.contains("show_title"));
+        assert!(json.contains("Test Show"));
+        assert!(json.contains("publish_date"));
+        assert!(json.contains("2023-10-13"));
+    }
+
+    /// Unit test - clean_text removes HTML tags and trims whitespace
+    #[test]
+    fn test_clean_text_removes_html_tags() {
+        // Given text with HTML tags
+        let text = "<p>Hello <strong>World</strong></p>";
+
+        // When we clean it
+        let cleaned = clean_text(text);
+
+        // Then HTML tags are removed
+        assert_eq!(cleaned, "Hello World");
+    }
+
+    /// Unit test - clean_text normalizes whitespace
+    #[test]
+    fn test_clean_text_normalizes_whitespace() {
+        // Given text with extra whitespace
+        let text = "  Hello    World  \n  Test  ";
+
+        // When we clean it
+        let cleaned = clean_text(text);
+
+        // Then whitespace is normalized
+        assert_eq!(cleaned, "Hello World Test");
+    }
+
+    /// Unit test - save_metadata_json creates valid JSON file
+    #[test]
+    fn test_save_metadata_json_creates_file() {
+        use tempfile::TempDir;
+
+        // Given a metadata struct and a temporary directory
+        let metadata = Metadata {
+            episode_title: "Test Episode".to_string(),
+            description: "Test description".to_string(),
+            show_title: "Test Show".to_string(),
+            publish_date: "2023-10-13".to_string(),
+        };
+
+        let temp_dir = TempDir::new().unwrap();
+        let json_path = temp_dir.path().join("metadata.json");
+        let json_path_str = json_path.to_str().unwrap();
+
+        // When we save it
+        let result = save_metadata_json(&metadata, json_path_str);
+
+        // Then it succeeds
+        assert!(result.is_ok(), "save_metadata_json should succeed");
+
+        // And the file exists
+        assert!(json_path.exists(), "JSON file should exist");
+
+        // And the file contains valid JSON
+        let content = fs::read_to_string(&json_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // And it has all the expected fields
+        assert_eq!(parsed["episode_title"], "Test Episode");
+        assert_eq!(parsed["description"], "Test description");
+        assert_eq!(parsed["show_title"], "Test Show");
+        assert_eq!(parsed["publish_date"], "2023-10-13");
+    }
+
+    /// Unit test - extract_metadata extracts from real Apple Podcasts HTML
+    #[test]
+    fn test_extract_metadata_from_real_html() {
+        // Given the actual episode.html file exists
+        let html_path = "output/episode.html";
+
+        // Skip test if file doesn't exist (for CI/CD environments)
+        if !Path::new(html_path).exists() {
+            return;
+        }
+
+        // When we extract metadata
+        let result = extract_metadata(html_path);
+
+        // Then it succeeds
+        assert!(result.is_ok(), "extract_metadata should succeed");
+
+        let metadata = result.unwrap();
+
+        // And all fields are non-empty
+        assert!(!metadata.episode_title.is_empty(), "Episode title should not be empty");
+        assert!(!metadata.description.is_empty(), "Description should not be empty");
+        assert!(!metadata.show_title.is_empty(), "Show title should not be empty");
+        assert!(!metadata.publish_date.is_empty(), "Publish date should not be empty");
+
+        // And the expected values are present
+        assert!(metadata.episode_title.contains("Kaepernick"));
+        assert_eq!(metadata.show_title, "Back to the Board");
+        assert_eq!(metadata.publish_date, "2023-10-13");
+    }
+
+    /// Unit test - extract_from_json_ld parses JSON-LD schema correctly
+    #[test]
+    fn test_extract_from_json_ld() {
+        // Given HTML with a JSON-LD schema
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <script id="schema:episode" type="application/ld+json">
+                {
+                    "name": "Test Episode Title",
+                    "description": "Test episode description",
+                    "datePublished": "2023-01-15",
+                    "partOfSeries": {
+                        "name": "Test Podcast Show"
+                    }
+                }
+                </script>
+            </head>
+            <body></body>
+            </html>
+        "#;
+
+        // When we parse it
+        let document = Html::parse_document(html);
+        let result = extract_from_json_ld(&document);
+
+        // Then it succeeds
+        assert!(result.is_ok(), "extract_from_json_ld should succeed");
+
+        let metadata = result.unwrap();
+
+        // And all fields are extracted correctly
+        assert_eq!(metadata.episode_title, "Test Episode Title");
+        assert_eq!(metadata.description, "Test episode description");
+        assert_eq!(metadata.show_title, "Test Podcast Show");
+        assert_eq!(metadata.publish_date, "2023-01-15");
     }
 }

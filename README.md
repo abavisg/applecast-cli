@@ -16,7 +16,7 @@ cargo build --release
 
 ### Basic Usage
 
-Provide an Apple Podcasts URL to fetch and save the episode page HTML:
+Provide an Apple Podcasts URL to fetch the episode page and extract metadata:
 
 ```bash
 applecast-cli https://podcasts.apple.com/us/podcast/id840986946?i=1000631244436
@@ -26,9 +26,12 @@ Output:
 ```
 📥 Received URL: https://podcasts.apple.com/us/podcast/id840986946?i=1000631244436
 ✅ Fetched HTML content.
+✅ Metadata extracted and saved to output/metadata.json
 ```
 
-The HTML content will be saved to `output/episode.html`.
+The tool automatically:
+1. Fetches the HTML content and saves it to `output/episode.html`
+2. Extracts episode metadata and saves it to `output/metadata.json`
 
 ### Examples
 
@@ -44,13 +47,24 @@ applecast-cli https://podcasts.apple.com/us/podcast/the-daily/id1200361736
 
 ### Output
 
-The tool creates an `output/` directory and saves the HTML content as `episode.html`:
+The tool creates an `output/` directory with two files:
 
 ```
 applecast-cli/
 ├── output/
-│   └── episode.html    # Full HTML content from Apple Podcasts
+│   ├── episode.html      # Full HTML content from Apple Podcasts
+│   └── metadata.json     # Extracted episode metadata
 └── ...
+```
+
+**metadata.json** contains structured episode information:
+```json
+{
+  "episode_title": "Kaepernick, Dak, the latest NBA news, and a slice of MLB",
+  "description": "Join us as we discuss a few of the latest news...",
+  "show_title": "Back to the Board",
+  "publish_date": "2023-10-13"
+}
 ```
 
 ### Error Handling
