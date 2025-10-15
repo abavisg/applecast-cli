@@ -1,6 +1,6 @@
 # applecast-cli
 
-A command-line tool for fetching and processing Apple Podcasts content.
+A command-line tool for fetching and processing podcast episode metadata from Apple Podcasts and other podcast websites.
 
 ## Installation
 
@@ -16,10 +16,16 @@ cargo build --release
 
 ### Basic Usage
 
-Provide an Apple Podcasts URL to fetch the episode page and extract metadata:
+Provide any podcast episode URL to fetch the page and extract metadata:
 
+**Apple Podcasts:**
 ```bash
 applecast-cli https://podcasts.apple.com/us/podcast/id840986946?i=1000631244436
+```
+
+**Other podcast websites:**
+```bash
+applecast-cli https://www.produxlabs.com/product-thinking-blog/episode-252-project-product-management
 ```
 
 Output:
@@ -45,15 +51,18 @@ The tool automatically:
 
 ### Examples
 
-Fetch episode page:
+**Apple Podcasts episode:**
 ```bash
 applecast-cli https://podcasts.apple.com/us/podcast/the-daily/id1200361736?i=1000631244436
 ```
 
-Fetch show page:
+**Squarespace podcast blog:**
 ```bash
-applecast-cli https://podcasts.apple.com/us/podcast/the-daily/id1200361736
+applecast-cli https://www.produxlabs.com/product-thinking-blog/episode-252-project-product-management
 ```
+
+**Any podcast website with meta tags:**
+The tool works with any website that has standard HTML meta tags (og:title, og:description, itemprop, etc.)
 
 ### Output
 

@@ -198,14 +198,30 @@ fn extract_from_meta_tags(document: &Html) -> Result<Metadata> {
     let mut episode_title = String::new();
     let mut description = String::new();
     let mut show_title = String::new();
-    let publish_date = String::new();
+    let mut publish_date = String::new();
 
     for element in document.select(&meta_selector) {
         if let Some(property) = element.value().attr("property") {
             match property {
                 "og:title" => {
-                    if let Some(content) = element.value().attr("content") {
-                        episode_title = clean_text(content);
+                    if episode_title.is_empty() {
+                        if let Some(content) = element.value().attr("content") {
+                            episode_title = clean_text(content);
+                        }
+                    }
+                }
+                "og:description" => {
+                    if description.is_empty() {
+                        if let Some(content) = element.value().attr("content") {
+                            description = clean_text(content);
+                        }
+                    }
+                }
+                "og:site_name" => {
+                    if show_title.is_empty() {
+                        if let Some(content) = element.value().attr("content") {
+                            show_title = clean_text(content);
+                        }
                     }
                 }
                 _ => {}
@@ -223,6 +239,38 @@ fn extract_from_meta_tags(document: &Html) -> Result<Metadata> {
                     if let Some(content) = element.value().attr("content") {
                         if description.is_empty() {
                             description = clean_text(content);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else if let Some(itemprop) = element.value().attr("itemprop") {
+            match itemprop {
+                "name" | "headline" => {
+                    if let Some(content) = element.value().attr("content") {
+                        if episode_title.is_empty() {
+                            episode_title = clean_text(content);
+                        }
+                    }
+                }
+                "description" => {
+                    if let Some(content) = element.value().attr("content") {
+                        if description.is_empty() {
+                            description = clean_text(content);
+                        }
+                    }
+                }
+                "publisher" => {
+                    if let Some(content) = element.value().attr("content") {
+                        if show_title.is_empty() {
+                            show_title = clean_text(content);
+                        }
+                    }
+                }
+                "datePublished" => {
+                    if let Some(content) = element.value().attr("content") {
+                        if publish_date.is_empty() {
+                            publish_date = clean_text(content);
                         }
                     }
                 }
