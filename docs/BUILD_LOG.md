@@ -56,3 +56,70 @@ Implements specs/slices/step-1_CLI-Bootstrap.md
 - Step 2: Fetch HTML from the provided URL
 
 ---
+
+## Slice 02 - Fetch Episode Page HTML
+
+**Date:** 2025-10-15
+
+**Status:** Complete
+
+**Summary:**
+- Implemented HTTP GET functionality using reqwest (blocking mode)
+- Added automatic output directory creation
+- Implemented HTML content fetching and file saving
+- Added comprehensive error handling for HTTP and I/O errors
+- Wrote 4 new unit tests following TDD approach (13 total tests now)
+- All tests passing (9 unit + 4 integration)
+- Successfully tested with real Apple Podcasts URLs
+
+**Dependencies Added:**
+- `reqwest = { version = "0.12", features = ["blocking"] }` - HTTP client
+- `tempfile = "3.8"` (dev) - Temporary file handling for tests
+
+**Files Modified:**
+- `Cargo.toml` - Added reqwest and tempfile dependencies
+- `src/main.rs` - Added `fetch_html()` function and updated `main()` to fetch and save HTML
+- `README.md` - Updated with Step 2 usage examples and error handling documentation
+
+**New Functionality:**
+- `fetch_html(url, output_path)` function that:
+  - Creates output directory if it doesn't exist
+  - Performs HTTP GET request with proper error handling
+  - Validates HTTP response status codes
+  - Saves HTML content to specified file path
+  - Returns descriptive error messages for all failure modes
+
+**Test Coverage:**
+- New unit tests (following Given/When/Then BDD pattern):
+  - `test_fetch_html_creates_file_with_content` - Successful HTML fetch and file creation
+  - `test_fetch_html_creates_directory` - Automatic directory creation for nested paths
+  - `test_fetch_html_handles_request_error` - Error handling for invalid domains
+  - `test_fetch_html_handles_http_error_status` - HTTP error status code handling (404, etc.)
+- All tests use temporary directories to avoid side effects
+- Total: 13 tests (9 unit + 4 integration), all passing
+
+**Manual Testing Results:**
+- ✅ Successfully fetched real Apple Podcasts episode page (125KB HTML)
+- ✅ Output file created at `output/episode.html`
+- ✅ Error handling verified for 404 responses
+- ✅ Clear error messages for network failures
+
+**Commit Message:**
+```
+feat: implement HTML fetching functionality (Step 2)
+
+- Add reqwest dependency for HTTP client functionality
+- Implement fetch_html() function with error handling
+- Create output directory automatically
+- Save HTML content to output/episode.html
+- Add 4 comprehensive unit tests (TDD approach)
+- Update README with Step 2 usage examples
+- All 13 tests passing
+
+Implements specs/slices/step-2_fetch-html.md
+```
+
+**Next Steps:**
+- Step 3: Parse HTML and extract episode metadata (title, description, publish date, etc.)
+
+---
